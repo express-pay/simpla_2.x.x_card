@@ -25,7 +25,7 @@ class ExpressPayCardView extends View
 		$this->design->assign('pages', $pages);
 		
 		// Создаем основной блок страницы
-		$content = $this->design->fetch('payment/ExpressPayCard/view/card_invoice.tpl');
+		$content = $this->design->fetch('payment/ExpressPayCard/card_invoice.tpl');
 				
 		// Передаем основной блок в шаблон
 		$this->design->assign('content', $content);		

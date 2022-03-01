@@ -5,7 +5,6 @@ require_once(dirname(__FILE__).'/api/ExpressPayLog.php');
 
 class ExpressPayCard extends Simpla
 {
-    
     public function checkout_form($order_id, $button_text = null)
 	{  
         $logs = new ExpressPayLog();
@@ -15,29 +14,30 @@ class ExpressPayCard extends Simpla
             $button_text = 'Перейти к оплате';
         }
 
-        $order          = $this->orders->get_order(intval($order_id));
-        $payment_method = $this->payment->get_payment_method($order->payment_method_id);
-        $settings		= $this->payment->get_payment_settings($order->payment_method_id);	
-        $purchases      = $this->orders->get_purchases(array('order_id'=>$order_id));
+        $order          = $this->orders->get_order(intval($order_id));                      //Получение заказа по его id
+        $payment_method = $this->payment->get_payment_method($order->payment_method_id);    //Получение метода оплаты по его id, который был выбран для оплаты
+        $settings		= $this->payment->get_payment_settings($order->payment_method_id);  //Получение настроек для метода оплаты
+        $currency       = $this->money->get_currency(intval($payment_method->currency_id)); //Получение валюты для последующей проверки кода валюты 
+        
+        $logs->log_info('checkout_form','$currency->code = ' . $currency->code);
+        if($currency->code != "BYN" && $currency->code != 933 && $currency->code != 974 && $currency->code != 'BYR')//Проверка кода валюты
+            return '<div class="message_error">Ошибка! Оплата может быть поизведена только в BYN!</div>';
 
-        $token          = $settings['token']; //API-ключ производителя услуг
-        $serviceId      = $settings['service_id']; //Номер услуги производителя услуг
+        $token          = $settings['token'];       //API-ключ производителя услуг
+        $serviceId      = $settings['service_id'];  //Номер услуги производителя услуг
         $url            = (($settings['test_mode'])? $settings['url_sandbox_api'] : $settings['url_api'])
-                            .'/v1/web_cardinvoices';
-                        //.'/v1/cardinvoices?token='.$token;
+                        .'/web_cardinvoices';       //Составление адреса, по которому будет отправлен запрос на выставление счета
+                        
+        $accountNo      = intval($order_id);        //Номер лицевого счета
 
-        $accountNo      = intval($order_id);//Номер лицевого счета
-        $amount         = str_replace( " ", "",$this->money->convert($order->total_price, $payment_method->currency_id, true));//	Сумма счета на оплату. Разделителем дробной и целой части является символ запятой
-        $currency       = (date('y') > 16 || (date('y') >= 16 && date('n') >= 7)) ? '933' : '974';//Код валюты
+        //Сумма счета на оплату. Разделителем дробной и целой части является символ запятой
+        $amount         = str_replace( " ", "",$this->money->convert($order->total_price, $payment_method->currency_id, true)); 
 
-        $info           = 'Оплата заказа номер '.$order_id.' в интернет-магазине '.$this->config->root_url;
-
+        $info           = str_replace('##order_id##',$order_id,$settings['info']); //Назначение платежа
         $logs->log_info('checkout_form','getting string info; info - '.$info);
 
         $return_url = $this->config->root_url.'/payment/ExpressPayCard/callback.php?result=success&accountno='.$accountNo;//Адрес для перенаправления пользователя в случае успешной оплаты
         $fail_url   = $this->config->root_url.'/payment/ExpressPayCard/callback.php?result=fail&accountno='.$accountNo;//Адрес для перенаправления пользователя в случае неуспешной оплаты
-
-        $sessionTimeoutSecs = $settings['session_timeout_secs'];
 
         /*
             ServiceId 	Integer 	Номер услуги
@@ -59,28 +59,23 @@ class ExpressPayCard extends Simpla
             (Примечание: только для случая, когда ReturnType равен 2 (Json)) 
         */
 
-        $secret_word = $settings['secret_key'];//Секретное слово для подписи счетов (Задается в панели express-pay.by)
+        $secret_word = $settings['secret_key']; //Секретное слово для подписи счетов (Задается в панели express-pay.by)
         $logs->log_info('checkout_form','getting a secret word; secret_word - '.$secret_word);
 
         $request_params = array(
             'ServiceId'         => $serviceId,
             'AccountNo'         => $accountNo,
             'Amount'            => $amount,
-            'Currency'          => $currency,
+            'Currency'          => '933',
             'ReturnType'        => 'redirect',
-            'ReturnUrl'         => $this->config->root_url.'/payment/ExpressPayCard/callback.php?result=success',
-            'FailUrl'           => $this->config->root_url.'/payment/ExpressPayCard/callback.php?result=fail',
+            'ReturnUrl'         => $return_url,
+            'FailUrl'           => $fail_url,
             'Expiration'        => '',
             'Info'              => $info
         );
-
-        $request_params['Signature'] = $this->compute_signature_add_invoice($request_params, $token, $secret_word);
-
-        $action = $this->config->root_url.'/payment/ExpressPayCard/callback.php';
-       
-        $logs->log_info('checkout_form','getting a action; action - '.$action);
+        $request_params['Signature'] = ExpressPayHelper::computeSignature($request_params, $secret_word, 'add-webcard-invoice');
         
-        $button         = '<form method="POST" action="'.$url.'">';
+        $button = '<form method="POST" action="'.$url.'">';
 
         foreach($request_params as $key => $value)
         {
@@ -93,45 +88,6 @@ class ExpressPayCard extends Simpla
         $logs->log_info('checkout_form','getting a button; button - '.$button);
         
         return $button;
-    }
-
-    function amountFormat($amount){
-
-        $amount_arr = explode(" ",$amount);
-        $amount = '';
-        foreach($amount_arr as $a){
-            $amount .= $a;
-        }
-        return $amount;
-    
-    }
-
-    private function compute_signature_add_invoice($request_params, $token, $secret_word) {
-        $secret_word = trim($secret_word);
-        $normalized_params = array_change_key_case($request_params, CASE_LOWER);
-        $api_method = array(
-            "serviceid",
-            "accountno",
-            "expiration",
-            "amount",
-            "currency",
-            "info",
-            "returnurl",
-            "failurl",
-            "language",
-            "sessiontimeoutsecs",
-            "expirationdate",
-            "returntype"
-        );
-
-        $result = $token;
-
-        foreach ($api_method as $item)
-            $result .= ( isset($normalized_params[$item]) ) ? $normalized_params[$item] : '';
-
-        $hash = strtoupper(hash_hmac('sha1', $result, $secret_word));
-
-        return $hash;
     }
 }
 ?>
