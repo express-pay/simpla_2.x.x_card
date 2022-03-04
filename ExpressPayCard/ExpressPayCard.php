@@ -63,18 +63,20 @@ class ExpressPayCard extends Simpla
         $logs->log_info('checkout_form','getting a secret word; secret_word - '.$secret_word);
 
         $request_params = array(
-            'ServiceId'         => $serviceId,
-            'AccountNo'         => $accountNo,
-            'Amount'            => $amount,
-            'Currency'          => '933',
-            'ReturnType'        => 'redirect',
-            'ReturnUrl'         => $return_url,
-            'FailUrl'           => $fail_url,
-            'Expiration'        => '',
-            'Info'              => $info
+            'Token'         => $token,
+            'ServiceId'     => $serviceId,
+            'AccountNo'     => $accountNo,
+            'Amount'        => $amount,
+            'Currency'      => '933',
+            'Info'          => $info,
+            'ReturnUrl'     => $return_url,
+            'FailUrl'       => $fail_url,
+            'ReturnType'    => 'redirect'
+            //'Expiration'    => '',
         );
         $request_params['Signature'] = ExpressPayHelper::computeSignature($request_params, $secret_word, 'add-webcard-invoice');
-        
+        unset($request_params['Token']);
+
         $button = '<form method="POST" action="'.$url.'">';
 
         foreach($request_params as $key => $value)
